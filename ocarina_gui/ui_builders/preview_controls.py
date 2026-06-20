@@ -35,7 +35,7 @@ def build_preview_controls(app: "App", parent: ttk.Frame, side: str) -> None:
     ttk.Label(tempo_row, text="Tempo (BPM):").pack(side="left")
     tempo_spin = ttk.Spinbox(
         tempo_row,
-        from_=10,
+        from_=30,
         to=400,
         increment=1,
         width=6,
@@ -187,7 +187,7 @@ def build_arranged_preview_controls(app: "App", parent: ttk.Frame, side: str) ->
     ttk.Label(tempo_row, text="Tempo (BPM)").pack(side="left")
     tempo_spin = ttk.Spinbox(
         tempo_row,
-        from_=10,
+        from_=30,
         to=400,
         increment=1,
         width=6,

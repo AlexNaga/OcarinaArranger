@@ -9,6 +9,7 @@ from tkinter import messagebox
 from typing import Any
 
 from ocarina_gui.preview import PreviewData
+from services.preview_cache import load_cached_preview
 from shared.result import Result
 
 logger = logging.getLogger(__name__)
@@ -82,9 +83,32 @@ def render_previews_for_ui(ui: Any) -> PreviewRenderHandle:
     ui._sync_viewmodel_settings()
     suppress_errors = getattr(ui, "_suppress_preview_error_dialogs", False)
     logger.info(
-        "Render previews requested",
+        "Render previews requested (auto_rendered=%s)",
+        getattr(ui, '_preview_auto_rendered', '?'),
         extra={"input_path": ui._viewmodel.state.input_path.strip()},
     )
+
+    # Fast path: if cache hits, skip all the loading UI setup
+    path = ui._viewmodel.state.input_path.strip()
+    if path:
+        settings_snapshot = ui._viewmodel.settings()
+        cached = load_cached_preview(path, settings_snapshot)
+        if cached is not None:
+            logger.info("Using cached preview (fast path)")
+            ui._viewmodel._last_preview = cached
+            ui._viewmodel.state.status_message = "Preview rendered (cached)."
+            ui._preview_auto_rendered = True
+            # Suppress overlay during audio render after cache hit
+            ui._preview_cache_fast_path = True
+            handle = PreviewRenderHandle(ui)
+            handle.result = Result.ok(cached)
+            ui._apply_preview_data(cached)
+            for side in ("original", "arranged"):
+                ui._set_preview_initial_loading(side, False)
+            ui.status.set(ui._viewmodel.state.status_message)
+            handle._finalise(result=Result.ok(cached))
+            return handle
+
     sides = ("original", "arranged")
     arranger_mode = (ui._viewmodel.state.arranger_mode or "classic").strip().lower()
     for side in sides:

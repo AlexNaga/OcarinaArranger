@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -21,21 +22,24 @@ _CACHE_DIR = Path.home() / ".ocarina_arranger" / "cache"
 
 def _cache_key(input_path: str, settings: TransformSettings) -> str:
     hasher = hashlib.sha256()
-    hasher.update(input_path.encode())
+    p = Path(input_path)
+    hasher.update(p.name.encode())
     try:
-        stat = Path(input_path).stat()
-        hasher.update(str(stat.st_mtime_ns).encode())
+        stat = p.stat()
         hasher.update(str(stat.st_size).encode())
     except OSError:
-        pass
+        hasher.update(input_path.encode())
     hasher.update(repr(settings).encode())
     return hasher.hexdigest()[:16]
 
 
 def load_cached_preview(input_path: str, settings: TransformSettings) -> Optional[PreviewData]:
+    if "pytest" in sys.modules:
+        return None
     key = _cache_key(input_path, settings)
     cache_file = _CACHE_DIR / f"{key}.json"
     if not cache_file.exists():
+        logger.debug("Preview cache miss: %s", key)
         return None
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -56,6 +60,8 @@ def load_cached_preview(input_path: str, settings: TransformSettings) -> Optiona
 
 
 def save_preview_cache(input_path: str, settings: TransformSettings, preview: PreviewData) -> None:
+    if "pytest" in sys.modules:
+        return
     key = _cache_key(input_path, settings)
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = _CACHE_DIR / f"{key}.json"

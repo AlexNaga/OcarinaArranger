@@ -317,7 +317,7 @@ def _build_modern_preview_side(
     fingering_box.grid(row=1, column=0, sticky="ew", pady=(8, 16))
     fingering_box.grid_columnconfigure(0, weight=1)
 
-    fingering = FingeringView(fingering_box)
+    fingering = FingeringView(fingering_box, scale=1.5)
     fingering.grid(row=0, column=0, sticky="n")
     if side == "original":
         app.side_fing_orig = fingering

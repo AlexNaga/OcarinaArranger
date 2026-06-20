@@ -40,11 +40,9 @@ def _import_source_file(app: App, path: str) -> None:
 
 def _bind_global_keys(app: App) -> None:
     def _toggle_play(event):
-        # Allow Space in text entry widgets
         widget = event.widget
         if isinstance(widget, (tk.Entry, tk.Text)):
             return
-        # Prevent ttk buttons from also firing
         try:
             widget_class = widget.winfo_class()
         except tk.TclError:
@@ -62,10 +60,19 @@ def _bind_global_keys(app: App) -> None:
         app._update_playback_visuals("arranged")
         return "break"
 
-    # Bind on the window itself and steal focus to it
     app.bind("<KeyPress-space>", _toggle_play)
     app.bind_all("<space>", _toggle_play)
-    app.after(200, lambda: app.focus_set())
+
+    # Keep grabbing focus until the window is fully ready
+    def _ensure_focus(attempts=10):
+        try:
+            app.focus_force()
+        except tk.TclError:
+            pass
+        if attempts > 0:
+            app.after(500, lambda: _ensure_focus(attempts - 1))
+
+    app.after(300, _ensure_focus)
 
 
 if __name__ == "__main__":

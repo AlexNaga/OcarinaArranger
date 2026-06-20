@@ -88,6 +88,13 @@ class PreviewProgressMixin:
         initial_loading = side in self._preview_initial_loading
         base_message = self._preview_progress_messages.get(side)
         try:
+            if getattr(self, '_preview_cache_fast_path', False):
+                # After a cache hit, hide the overlay and let audio render silently
+                if manager == "place":
+                    frame.place_forget()
+                elif manager:
+                    frame.pack_forget()
+                return
             if playback.state.is_rendering:
                 progress = max(0.0, min(1.0, playback.state.render_progress))
                 percent = max(0.0, min(100.0, progress * 100.0))
