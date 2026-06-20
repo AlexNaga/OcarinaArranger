@@ -339,13 +339,21 @@ class _FailoverPlayer(_AudioPlayer):
 
 def _select_player() -> Optional[_AudioPlayer]:
     candidates: list[_AudioPlayer] = []
-    if _current_simpleaudio() is not None:
-        candidates.append(_SimpleAudioPlayer())
     if sys.platform.startswith("win") and _current_winsound() is not None:
         candidates.append(_WinsoundPlayer())
-    command_player = _CommandPlayer.build()
-    if command_player is not None:
-        candidates.append(command_player)
+    if sys.platform == "linux":
+        # Prefer command-based player on Linux; simpleaudio segfaults on stop.
+        command_player = _CommandPlayer.build()
+        if command_player is not None:
+            candidates.append(command_player)
+        if _current_simpleaudio() is not None:
+            candidates.append(_SimpleAudioPlayer())
+    else:
+        if _current_simpleaudio() is not None:
+            candidates.append(_SimpleAudioPlayer())
+        command_player = _CommandPlayer.build()
+        if command_player is not None:
+            candidates.append(command_player)
     if not candidates:
         return None
     if len(candidates) == 1:

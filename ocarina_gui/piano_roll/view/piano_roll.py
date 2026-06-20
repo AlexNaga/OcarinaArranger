@@ -247,6 +247,9 @@ class PianoRoll(
             return
 
         self._redraw_visible_region(force=True)
+        # Schedule a deferred redraw for when the canvas has been mapped but
+        # the viewport width was not yet available during the initial render.
+        self.after_idle(lambda: self._redraw_visible_region(force=True))
 
         palette = self._palette
         height = self._content_height or int(self.canvas.winfo_height())

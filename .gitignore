@@ -9,3 +9,5 @@ build/
 dist/
 .venv
 tests/e2e/artifacts/
+
+.playwright-mcp/

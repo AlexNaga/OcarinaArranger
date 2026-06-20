@@ -22,8 +22,8 @@ class MenuBuilderMixin:
 
     def _build_menus(self) -> None:
         menubar = tk.Menu(self)
-        # Decide whether to use native menubar (macOS) or custom (others).
-        self._use_native_menubar = (sys.platform == "darwin")
+        # Use native menubar on macOS and Linux; custom only on Windows.
+        self._use_native_menubar = (sys.platform != "win32")
         force_native = os.environ.get("OCARINA_FORCE_NATIVE_MENUBAR", "").strip().lower()
         if force_native and force_native not in {"0", "false", "no"}:
             self._use_native_menubar = True

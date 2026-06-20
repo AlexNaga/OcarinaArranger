@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import tkinter as tk
 from importlib import resources
 from pathlib import Path
@@ -190,6 +191,8 @@ class ThemeInitialisationMixin:
         return None
 
     def _apply_windows_taskbar_icon(self, resource_name: str) -> bool:
+        if sys.platform != "win32":
+            return True
         resource = get_main_window_resource(resource_name)
         if resource is None:
             return False

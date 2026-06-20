@@ -291,7 +291,7 @@ class PreviewPlaybackViewModel:
     def _normalize_tempo(tempo_bpm: float) -> float:
         if tempo_bpm <= 0:
             return 30.0
-        return max(30.0, min(400.0, tempo_bpm))
+        return max(10.0, min(400.0, tempo_bpm))
 
     def _rebuild_tempo_map(self, target_first: float) -> None:
         try:

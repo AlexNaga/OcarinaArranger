@@ -17,6 +17,7 @@ from services.project_service import (
     PreviewPlaybackSnapshot,
 )
 from services.score_service import ScoreService
+from services.preview_cache import load_cached_preview, save_preview_cache
 from shared.result import Result
 
 from domain.arrangement.api import ArrangementStrategyResult
@@ -119,6 +120,17 @@ class MainViewModel(
                 return Result.err(require_result.error)
             path = require_result.unwrap()
             settings_snapshot = self.settings()
+        cached = load_cached_preview(path, settings_snapshot)
+        if cached is not None:
+            logger.info("Using cached preview data", extra={"path": path})
+            with self._state_lock:
+                self.state.status_message = "Preview rendered (cached)."
+                self._pending_input_confirmation = False
+                self._last_successful_input_snapshot = capture_preview_state(
+                    self.state, self._pitch_entries
+                )
+                self._last_preview = cached
+            return Result.ok(cached)
         logger.info("Building preview data", extra={"path": path})
         midi_mode = self._midi_import_mode()
         try:
@@ -153,6 +165,7 @@ class MainViewModel(
             self.update_arranger_summary(summaries=(), strategy=self.state.arranger_strategy)
             self.update_arranger_results(summary=None, explanations=(), telemetry=())
         updated_preview = preview_with_arranger_events(preview, computation)
+        save_preview_cache(path, settings_snapshot, updated_preview)
         with self._state_lock:
             self.state.status_message = "Preview rendered."
             self._pending_input_confirmation = False
