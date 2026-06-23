@@ -9,6 +9,12 @@ from collections import namedtuple
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
+try:
+    import numpy as np  # ponytail: numpy for vectorised synth; fallback to pure-python if missing
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
 from .patches import _patch_for_program
 from .tone import _midi_to_frequency
 from shared.tempo import TempoChange, TempoMap, normalized_tempo_changes
@@ -100,56 +106,90 @@ def note_segment(
 
         if frequency <= 0.0 or length <= 0:
             result = (0.0,) * length
+        elif _HAS_NUMPY:
+            result = _note_segment_numpy(program, midi, frequency, length, sample_rate)
         else:
-            patch = _patch_for_program(program)
-            base_step = 2.0 * math.pi * frequency / sample_rate
-            vibrato_step = (
-                2.0 * math.pi * patch.vibrato_hz / sample_rate
-                if patch.vibrato_hz
-                else 0.0
-            )
-            vibrato_depth = patch.vibrato_depth
-            harmonics = patch.harmonics
-            gain = patch.gain
-            pitch_gain = _pitch_normalization_gain(midi)
-
-            attack = max(1, min(length, int(length * patch.attack_ratio)))
-            release = max(1, min(length, int(length * patch.release_ratio)))
-            attack_scale = 1.0 / attack if attack else 1.0
-            release_scale = 1.0 / release if release else 1.0
-            release_start = max(0, length - release)
-
-            segment: list[float] = [0.0] * length
-            base_phase = 0.0
-            vibrato_phase = 0.0
-
-            for index in range(length):
-                if index < attack:
-                    envelope = index * attack_scale
-                elif index >= release_start:
-                    envelope = (length - index) * release_scale
-                else:
-                    envelope = 1.0
-
-                vibrato_scale = 1.0
-                if vibrato_depth and vibrato_step:
-                    vibrato_scale += vibrato_depth * math.sin(vibrato_phase)
-                    vibrato_phase += vibrato_step
-
-                sample_value = 0.0
-                phase = base_phase
-                for multiple, amplitude in harmonics:
-                    sample_value += math.sin(phase * multiple) * amplitude
-
-                segment[index] = sample_value * envelope * gain * pitch_gain
-                step_scale = vibrato_scale if vibrato_scale > 0.0 else 0.0
-                base_phase += base_step * step_scale
-            result = tuple(segment)
+            result = _note_segment_pure(program, midi, frequency, length, sample_rate)
 
         if len(_note_segment_cache) > 2048:
             _note_segment_cache.clear()
         _note_segment_cache[key] = result
         return result
+
+
+def _note_segment_numpy(
+    program: int, midi: int, frequency: float, length: int, sample_rate: int
+) -> tuple[float, ...]:
+    """Vectorised note rendering via numpy."""
+    patch = _patch_for_program(program)
+    gain = patch.gain * _pitch_normalization_gain(midi)
+    attack = max(1, min(length, int(length * patch.attack_ratio)))
+    release = max(1, min(length, int(length * patch.release_ratio)))
+    release_start = max(0, length - release)
+
+    # Envelope
+    envelope = np.ones(length, dtype=np.float64)
+    envelope[:attack] = np.linspace(0.0, 1.0, attack, endpoint=False)
+    if release_start < length:
+        envelope[release_start:] = np.linspace(1.0, 0.0, length - release_start, endpoint=False)
+
+    # Phase with vibrato
+    base_step = 2.0 * math.pi * frequency / sample_rate
+    if patch.vibrato_hz and patch.vibrato_depth:
+        vib_phase = np.arange(length, dtype=np.float64) * (2.0 * math.pi * patch.vibrato_hz / sample_rate)
+        phase_increments = base_step * (1.0 + patch.vibrato_depth * np.sin(vib_phase))
+        np.maximum(phase_increments, 0.0, out=phase_increments)
+        phase = np.cumsum(phase_increments)
+    else:
+        phase = np.arange(1, length + 1, dtype=np.float64) * base_step
+
+    # Harmonics sum
+    signal = np.zeros(length, dtype=np.float64)
+    for multiple, amplitude in patch.harmonics:
+        signal += np.sin(phase * multiple) * amplitude
+
+    signal *= envelope * gain
+    return tuple(signal.tolist())
+
+
+def _note_segment_pure(
+    program: int, midi: int, frequency: float, length: int, sample_rate: int
+) -> tuple[float, ...]:
+    """Pure-Python fallback for note rendering."""
+    patch = _patch_for_program(program)
+    base_step = 2.0 * math.pi * frequency / sample_rate
+    vibrato_step = (
+        2.0 * math.pi * patch.vibrato_hz / sample_rate if patch.vibrato_hz else 0.0
+    )
+    vibrato_depth = patch.vibrato_depth
+    harmonics = patch.harmonics
+    gain = patch.gain * _pitch_normalization_gain(midi)
+    attack = max(1, min(length, int(length * patch.attack_ratio)))
+    release = max(1, min(length, int(length * patch.release_ratio)))
+    attack_scale = 1.0 / attack if attack else 1.0
+    release_scale = 1.0 / release if release else 1.0
+    release_start = max(0, length - release)
+    segment: list[float] = [0.0] * length
+    base_phase = 0.0
+    vibrato_phase = 0.0
+    for index in range(length):
+        if index < attack:
+            envelope = index * attack_scale
+        elif index >= release_start:
+            envelope = (length - index) * release_scale
+        else:
+            envelope = 1.0
+        vibrato_scale = 1.0
+        if vibrato_depth and vibrato_step:
+            vibrato_scale += vibrato_depth * math.sin(vibrato_phase)
+            vibrato_phase += vibrato_step
+        sample_value = 0.0
+        phase = base_phase
+        for multiple, amplitude in harmonics:
+            sample_value += math.sin(phase * multiple) * amplitude
+        segment[index] = sample_value * envelope * gain
+        base_phase += base_step * (vibrato_scale if vibrato_scale > 0.0 else 0.0)
+    return tuple(segment)
 
 
 def render_events(
@@ -176,7 +216,7 @@ def render_events(
     sample_count = (
         max(1, int(math.ceil(total_seconds * sample_rate)) + int(sample_rate * 0.5))
     )
-    mix = [0.0] * sample_count
+    mix = np.zeros(sample_count, dtype=np.float64) if _HAS_NUMPY else [0.0] * sample_count
 
     chunk_size = max(1, int(config.chunk_size))
 
@@ -249,24 +289,37 @@ def render_events(
         limit = min(len(segment), sample_count - base_index)
         if limit <= 0:
             continue
-        segment_slice = segment[:limit]
-        remaining = limit
-        dest_index = base_index
-        processed = 0
-        while remaining > 0:
-            step = remaining
+        if _HAS_NUMPY:
+            seg_arr = np.array(segment[:limit], dtype=np.float64)
+            mix[base_index:base_index + limit] += seg_arr
+            # Report progress in chunks to satisfy listener contracts
             if progress_callback is not None and total_work > 0:
-                step = min(step, chunk_size)
-            dest_end = dest_index + step
-            src_slice = segment_slice[processed : processed + step]
-            existing = mix[dest_index:dest_end]
-            mix[dest_index:dest_end] = [
-                current + addition for current, addition in zip(existing, src_slice)
-            ]
-            dest_index = dest_end
-            processed += step
-            remaining -= step
-            _report_progress(step)
+                remaining_p = limit
+                while remaining_p > 0:
+                    step = min(remaining_p, chunk_size)
+                    _report_progress(step)
+                    remaining_p -= step
+            else:
+                _report_progress(limit)
+        else:
+            segment_slice = segment[:limit]
+            remaining = limit
+            dest_index = base_index
+            processed = 0
+            while remaining > 0:
+                step = remaining
+                if progress_callback is not None and total_work > 0:
+                    step = min(step, chunk_size)
+                dest_end = dest_index + step
+                src_slice = segment_slice[processed : processed + step]
+                existing = mix[dest_index:dest_end]
+                mix[dest_index:dest_end] = [
+                    current + addition for current, addition in zip(existing, src_slice)
+                ]
+                dest_index = dest_end
+                processed += step
+                remaining -= step
+                _report_progress(step)
 
     if config.metronome.enabled:
         overlay_metronome(
@@ -283,10 +336,16 @@ def render_events(
     if progress_callback is not None and total_work > 0 and completed_work < total_work:
         _report_progress(total_work - completed_work)
 
-    peak = max((abs(val) for val in mix), default=0.0)
+    if _HAS_NUMPY:
+        peak = float(np.max(np.abs(mix)))
+    else:
+        peak = max((abs(val) for val in mix), default=0.0)
     if peak <= 1e-9:
         return b"", tempo_map
     scale = (config.amplitude * 32767.0) / peak
+    if _HAS_NUMPY:
+        scaled = np.clip(mix * scale, -32767, 32767).astype(np.int16)
+        return scaled.tobytes(), tempo_map
     samples = array("h", (int(max(-32767, min(32767, val * scale))) for val in mix))
     return samples.tobytes(), tempo_map
 

@@ -248,9 +248,9 @@ class _CommandPlayer(_AudioPlayer):
     @classmethod
     def build(cls) -> Optional["_CommandPlayer"]:
         candidates = [
-            ("afplay", []),
-            ("aplay", ["-q"]),
             ("paplay", []),
+            ("aplay", ["-q"]),
+            ("afplay", []),
             ("ffplay", ["-autoexit", "-nodisp", "-loglevel", "quiet"]),
         ]
         for executable, extra in candidates:

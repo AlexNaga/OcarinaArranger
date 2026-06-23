@@ -3,6 +3,7 @@ ttkbootstrap==1.14.2
 simpleaudio==1.0.4
 packaging==25.0
 pillow==10.4.0
+numpy>=1.26
 
 # Test dependencies
 pytest>=7.4
