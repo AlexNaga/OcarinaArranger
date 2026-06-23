@@ -314,9 +314,7 @@ class PreviewPlaybackSupportMixin:
         if playback is None:
             view.set_midi(None)
             return
-        if not is_playing and not is_dragging:
-            view.set_midi(None)
-            return
+        # ponytail: show fingering at current cursor position even when paused
         midi = self._current_playback_midi(side)
         if midi is not None:
             view.set_midi(midi)

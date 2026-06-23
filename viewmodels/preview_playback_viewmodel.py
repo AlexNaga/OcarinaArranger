@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 from typing import Callable, Sequence
 
 from .preview_playback_render_tracker import PreviewRenderTracker
@@ -45,6 +46,10 @@ class PreviewPlaybackViewModel:
         self._render_tracker = PreviewRenderTracker(self.state, self._state_lock)
         self._audio.set_render_listener(self._RenderListener(self))
         self._audio.set_volume(self.state.volume)
+        # ponytail: absolute playback clock to prevent incremental drift.
+        # Upgrade path: get actual sample position from audio backend.
+        self._play_start_wall: float | None = None
+        self._play_start_tick: int = 0
 
     # ------------------------------------------------------------------
     # State management
@@ -190,6 +195,7 @@ class PreviewPlaybackViewModel:
             self.state.is_playing = False
             self._audio.pause()
             self._pending_playback_resume = False
+            self._play_start_wall = None
             return False
 
         if not self._supports_audio:
@@ -208,6 +214,8 @@ class PreviewPlaybackViewModel:
         self.state.is_playing = started
         if started:
             self.state.last_error = None
+            self._play_start_wall = time.perf_counter()
+            self._play_start_tick = self.state.position_tick
             if self.state.is_rendering:
                 self._pending_playback_resume = True
             logger.debug(
@@ -231,6 +239,27 @@ class PreviewPlaybackViewModel:
         if elapsed_seconds <= 0:
             return
         if self._pending_playback_resume:
+            return
+
+        # ponytail: compute position from absolute wall-clock reference to
+        # prevent incremental rounding drift between audio and visual cursor.
+        if self._play_start_wall is not None:
+            total_elapsed = time.perf_counter() - self._play_start_wall
+            if total_elapsed <= 0:
+                return
+            tempo_map = self._tempo_map
+            if tempo_map is not None:
+                start_seconds = tempo_map.seconds_at(self._play_start_tick)
+                target_seconds = start_seconds + total_elapsed
+                target_tick = int(tempo_map.seconds_to_tick(target_seconds))
+            else:
+                tps = (self.state.tempo_bpm / 60.0) * self.state.pulses_per_quarter
+                target_tick = self._play_start_tick + int(total_elapsed * tps)
+            if target_tick <= self.state.position_tick:
+                return
+            whole_ticks = target_tick - self.state.position_tick
+            self._fractional_ticks = 0.0
+            self._move_forward(whole_ticks)
             return
 
         tempo_map = self._tempo_map
@@ -272,6 +301,10 @@ class PreviewPlaybackViewModel:
         self.state.position_tick = target
         self._fractional_ticks = 0.0
         self._audio.seek(target)
+        # Reset absolute clock reference so cursor stays synced after seek
+        if self.state.is_playing:
+            self._play_start_wall = time.perf_counter()
+            self._play_start_tick = target
         logger.debug("seek_to: moved cursor to tick=%d", target)
 
     def set_tempo(self, tempo_bpm: float) -> None:
@@ -435,6 +468,7 @@ class PreviewPlaybackViewModel:
             self.state.last_error = None
         self._audio.stop()
         self._pending_playback_resume = False
+        self._play_start_wall = None
         if self.state.is_loaded:
             logger.debug("stop: playback stopped")
 
